@@ -428,3 +428,82 @@ async fn image_route_should_return_the_exact_upstream_error_response() {
         vec![422]
     );
 }
+
+#[tokio::test]
+async fn image_tasks_should_submit_poll_and_return_upstream_result() {
+    let execution = ImageExecution::new();
+    let router = api_router(execution.clone()).await;
+
+    // 提交异步任务
+    let submit = router
+        .clone()
+        .oneshot(
+            Request::post("/v1/images/generations/tasks")
+                .header(AUTHORIZATION, "Bearer sk_images_test")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    br#"{ "model":"gpt-image-2", "prompt":"async ship" }"#.to_vec(),
+                ))
+                .expect("task submit"),
+        )
+        .await
+        .expect("task submit response");
+    assert_eq!(submit.status(), StatusCode::ACCEPTED);
+    let submit_body = to_bytes(submit.into_body(), usize::MAX)
+        .await
+        .expect("submit body");
+    let submitted: Value = serde_json::from_slice(&submit_body).expect("submit json");
+    let task_id = submitted["task_id"].as_str().expect("task id");
+    assert_eq!(submitted["status"], "queued");
+    assert_eq!(
+        submitted["poll_url"].as_str().expect("poll url"),
+        format!("/v1/images/tasks/{task_id}")
+    );
+
+    // 轮询直到终态（任务在 spawned future 中执行）
+    let mut final_view = None;
+    for _ in 0..200 {
+        let poll = router
+            .clone()
+            .oneshot(
+                Request::get(format!("/v1/images/tasks/{task_id}"))
+                    .header(AUTHORIZATION, "Bearer sk_images_test")
+                    .body(Body::empty())
+                    .expect("poll"),
+            )
+            .await
+            .expect("poll response");
+        assert_eq!(poll.status(), StatusCode::OK);
+        let body = to_bytes(poll.into_body(), usize::MAX)
+            .await
+            .expect("poll body");
+        let view: Value = serde_json::from_slice(&body).expect("poll json");
+        if view["status"] == "completed" || view["status"] == "failed" {
+            final_view = Some(view);
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    let view = final_view.expect("task reached terminal state");
+    assert_eq!(view["status"], "completed");
+    assert_eq!(view["http_status"], 201);
+    assert_eq!(view["result"]["data"][0]["b64_json"].as_str(), Some("AAEC"));
+
+    // 确认确实经过了 provider endpoint（含计费 commit）
+    let captured = execution.captured();
+    assert_eq!(captured.len(), 1);
+    assert_eq!(captured[0].kind, ImageRequestKind::Generation);
+    assert_eq!(execution.committed_statuses(), vec![201]);
+
+    // 其他 Key 不能看到该任务
+    let foreign = router
+        .oneshot(
+            Request::get(format!("/v1/images/tasks/{task_id}"))
+                .header(AUTHORIZATION, "Bearer wrong-key")
+                .body(Body::empty())
+                .expect("foreign poll"),
+        )
+        .await
+        .expect("foreign poll response");
+    assert_ne!(foreign.status(), StatusCode::OK);
+}

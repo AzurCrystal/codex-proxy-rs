@@ -190,6 +190,7 @@ pub fn initialize(
     let state = ApiState {
         admin,
         openai: OpenAiService::new(execution, lifecycle),
+        image_tasks: openai::images::ImageTasks::new(),
         health: HealthStatus::new(probes, worker_health, diagnostics.clone()),
     };
     let index = config.asset_directory.join("index.html");
@@ -296,6 +297,7 @@ pub enum ApiError {
 pub(crate) struct ApiState {
     admin: AdminServices,
     openai: OpenAiService,
+    image_tasks: openai::images::ImageTasks,
     health: HealthStatus,
 }
 
@@ -303,6 +305,11 @@ impl ApiState {
     #[must_use]
     pub(crate) const fn openai(&self) -> &OpenAiService {
         &self.openai
+    }
+
+    #[must_use]
+    pub(crate) const fn image_tasks(&self) -> &openai::images::ImageTasks {
+        &self.image_tasks
     }
 
     #[must_use]

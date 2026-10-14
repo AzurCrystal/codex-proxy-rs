@@ -7,7 +7,10 @@ use axum::{
 };
 
 use super::{
-    images::{image_edits, image_generations},
+    images::{
+        image_edits, image_edits_async, image_edits_task, image_generations,
+        image_generations_async, image_generations_task, image_task_status,
+    },
     live,
     models::{model_detail, models},
     responses::{responses, responses_websocket},
@@ -21,6 +24,9 @@ use crate::ApiState;
 pub(super) const RESPONSES_PATH: &str = "/v1/responses";
 pub(super) const IMAGE_GENERATIONS_PATH: &str = "/v1/images/generations";
 pub(super) const IMAGE_EDITS_PATH: &str = "/v1/images/edits";
+pub(super) const IMAGE_GENERATIONS_TASKS_PATH: &str = "/v1/images/generations/tasks";
+pub(super) const IMAGE_EDITS_TASKS_PATH: &str = "/v1/images/edits/tasks";
+pub(super) const IMAGE_TASKS_PATH: &str = "/v1/images/tasks/{task_id}";
 pub(super) const SEARCH_PATH: &str = "/v1/alpha/search";
 pub(super) const MODELS_PATH: &str = "/v1/models";
 pub(super) const MODEL_DETAIL_PATH: &str = "/v1/models/{model_id}";
@@ -31,6 +37,18 @@ pub(crate) fn router() -> Router<ApiState> {
     Router::new()
         .route(IMAGE_GENERATIONS_PATH, post(image_generations))
         .route(IMAGE_EDITS_PATH, post(image_edits))
+        .route(IMAGE_GENERATIONS_TASKS_PATH, post(image_generations_task))
+        .route(IMAGE_EDITS_TASKS_PATH, post(image_edits_task))
+        .route(IMAGE_TASKS_PATH, get(image_task_status))
+        // sub2api 异步生图兼容：旧客户端直连 /images/* 与 /v1/images/* async 端点
+        .route("/images/generations/async", post(image_generations_async))
+        .route("/images/edits/async", post(image_edits_async))
+        .route("/images/tasks/{task_id}", get(image_task_status))
+        .route(
+            "/v1/images/generations/async",
+            post(image_generations_async),
+        )
+        .route("/v1/images/edits/async", post(image_edits_async))
         .route(SEARCH_PATH, post(standalone_search))
         .route(RESPONSES_PATH, get(responses_websocket).post(responses))
         .route(MODELS_PATH, get(models))
